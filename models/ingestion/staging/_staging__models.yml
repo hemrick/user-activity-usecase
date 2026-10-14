@@ -1,0 +1,57 @@
+version: 2
+
+# Tests declared here monitor the content of the events (tag `tests_data_quality`).
+
+models:
+  - name: stg_events__case_properties
+    description: >
+      One row per `case_properties` event, with the JSON payload flattened into typed columns.
+      Each event is a full picture of the case after a change. Other event types get their own
+      `stg_events__<event_type>` model.
+
+      Incremental, append-only: a run adds the events emitted after the latest one already loaded.
+      An event arriving late with an older timestamp would be skipped (the event counts of raw and of
+      this model would differ, see `stg_events_row_count_matches_raw`); corrections and backfills go
+      through `--full-refresh`.
+    columns:
+      - name: event_id
+        description: Unique identifier of the event.
+        data_tests:
+          - unique
+          - not_null
+      - name: emitted_at
+        description: >
+          Date and time the event was emitted (`timestamp` in raw.events). Business time zone, see
+          the `business_date` docs block.
+        data_tests:
+          - not_null
+      - name: case_id
+        description: Case the event belongs to.
+        data_tests:
+          - not_null
+      - name: user_id
+        description: User who opened the case (`subject_user_id` in the payload).
+        data_tests:
+          - not_null
+          - relationships:
+              name: stg_events__case_properties_user_exists
+              description: >
+                The user of each event exists in raw.users. Warning: a case of an unknown
+                user is kept without a province or an organization.
+              to: source('raw', 'users')
+              field: id
+              config:
+                severity: warn
+      - name: issue_type
+        description: Category of the issue raised by the user. Null until set during triage.
+      - name: triage_recommendation
+        description: Recommended next step after triage. Null on the event that opens the case.
+      - name: status
+        description: Status of the case after the change, `pending` or `resolved`.
+        data_tests:
+          - not_null
+          - accepted_values:
+              description: >
+                The status is `pending` or `resolved`. A new value means the source changed the
+                case lifecycle: to review with the data owner.
+              values: ['pending', 'resolved']

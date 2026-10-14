@@ -1,0 +1,30 @@
+version: 2
+
+# Unit tests on synthetic batches (tag `tests_delivery`). Batches are loaded at 01:20 local time and
+# describe the end of the previous day: a batch loaded on 2024-03-02 has business date 2024-03-01.
+
+unit_tests:
+  - name: dim_users_scd_builds_versions
+    description: >
+      User 1 moves from CA-QC to CA-ON: the first version ends where the second starts
+      (valid_to = next valid_from), only the last one is current. Dates are business dates: a batch
+      loaded on 2024-03-02 describes 2024-03-01. User 2: loaded_at written in Pacific time → same
+      business date as in Eastern time.
+    model: dim_users_scd
+    config:
+      tags: ['tests_delivery']
+    given:
+      - input: ref('int_users_changes')
+        format: sql
+        rows: |
+          select user_id, loaded_at, province_of_residence, 10 as organization_id, true as has_eligible_programs
+          from (values
+            (1, 'CA-QC', timestamptz '2024-03-02 01:20:00-05'),
+            (1, 'CA-ON', timestamptz '2024-03-05 01:20:00-05'),
+            (2, 'CA-BC', timestamptz '2024-03-01 22:20:00-08')
+          ) as t(user_id, province_of_residence, loaded_at)
+    expect:
+      rows:
+        - {user_id: 1, province_of_residence: CA-QC, valid_from: 2024-03-01, valid_to: 2024-03-04, is_current: false}
+        - {user_id: 1, province_of_residence: CA-ON, valid_from: 2024-03-04, valid_to: null,       is_current: true}
+        - {user_id: 2, province_of_residence: CA-BC, valid_from: 2024-03-01, valid_to: null,       is_current: true}

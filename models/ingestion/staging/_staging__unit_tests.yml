@@ -1,0 +1,30 @@
+version: 2
+
+unit_tests:
+  - name: stg_events__case_properties_flattens_payload
+    description: >
+      The payload is flattened into typed columns, explicit JSON nulls become SQL nulls, and events of
+      another type are filtered out.
+    model: stg_events__case_properties
+    config:
+      tags: ['tests_delivery']
+    overrides:
+      macros:
+        is_incremental: false
+    given:
+      - input: source('raw', 'events')
+        format: sql
+        rows: |
+          select timestamp, event_id, event_type, data::json as data
+          from (values
+            ('e1', timestamp '2024-03-01 00:00:00', 'case_properties',
+             '{"case_id":7,"subject_user_id":42,"issue_type":null,"triage_recommendation":null,"status":"pending"}'),
+            ('e2', timestamp '2024-03-01 00:40:00', 'case_properties',
+             '{"case_id":7,"subject_user_id":42,"issue_type":"billing","triage_recommendation":"refer_to_legal","status":"resolved"}'),
+            ('e3', timestamp '2024-03-01 00:50:00', 'another_event_type',
+             '{"something":"else"}')
+          ) as t(event_id, timestamp, event_type, data)
+    expect:
+      rows:
+        - {event_id: e1, emitted_at: '2024-03-01 00:00:00', case_id: 7, user_id: 42, issue_type: null,   triage_recommendation: null,                status: pending}
+        - {event_id: e2, emitted_at: '2024-03-01 00:40:00', case_id: 7, user_id: 42, issue_type: billing, triage_recommendation: refer_to_legal, status: resolved}

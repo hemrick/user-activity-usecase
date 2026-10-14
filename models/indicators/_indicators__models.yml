@@ -1,0 +1,84 @@
+version: 2
+
+# Tests declared here check our own logic (tag `tests_delivery`).
+
+models:
+  - name: dim_calendar_months
+    description: >
+      One row per calendar month, from the first business date of the data to the reporting date
+      (project variable `reporting_date`, "today" in the business time zone). A month is reported when
+      it is over before the reporting date and the latest user batch covers its last day.
+    columns:
+      - name: calendar_month
+        description: First day of the month.
+        data_tests:
+          - unique
+          - not_null
+      - name: month_end_date
+        description: Last day of the month.
+      - name: is_reported
+        description: >
+          True when the month is over (`month_end_date` before `reporting_date`) and the data covers
+          its last day. Only reported months appear in the KPI tables.
+
+  - name: fct_cases
+    description: >
+      One row per case, at its opening. The opening is the earliest event of the case. The
+      province and organization are the user's on the opening day: they are attributes of the
+      user, reached through `dim_users_scd`. Every case is kept, even if its user has no
+      version that day (province and organization then null, raised by the data quality test
+      `case_user_in_opening_day_batch`).
+    columns:
+      - name: case_id
+        description: Case identifier.
+        data_tests:
+          - unique
+          - not_null
+      - name: user_id
+        description: User who opened the case.
+      - name: opened_at
+        description: Timestamp of the earliest event of the case (business time zone).
+      - name: opened_date
+        description: Date of opening.
+      - name: calendar_month
+        description: First day of the month of opening.
+      - name: user_sk
+        description: Version of the user valid on the opening day (`dim_users_scd`).
+      - name: province_of_residence
+        description: User's province of residence on the opening day.
+      - name: organization_id
+        description: User's organization on the opening day.
+
+  - name: fct_user_month_end
+    description: >
+      One row per user present on the last day of each reported month, with their province and
+      organization on that day and the enrolment flags. Every present user is kept; the KPI tables
+      count only `is_enrolled`.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          name: fct_user_month_end_one_row_per_user_and_month
+          description: >
+            One row per user and month. A duplicate would count the user twice in the
+            denominator.
+          combination_of_columns: [user_id, calendar_month]
+    columns:
+      - name: user_id
+        description: User identifier.
+      - name: calendar_month
+        description: First day of the month.
+      - name: month_end_date
+        description: Last day of the month, the date on which the user's state is taken.
+      - name: user_sk
+        description: Version of the user valid on `month_end_date` (`dim_users_scd`).
+      - name: province_of_residence
+        description: User's province of residence on the last day of the month.
+      - name: organization_id
+        description: User's organization on the last day of the month.
+      - name: has_eligible_programs
+        description: True when the user is eligible to at least one program on that day.
+      - name: is_organization_active
+        description: True when the user's organization has not churned on that day.
+      - name: is_enrolled
+        description: >
+          Enrolled on the last day of the month: at least one eligible program and an active
+          organization. Counted as an enrolled user in the KPI tables.

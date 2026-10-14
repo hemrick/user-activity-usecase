@@ -1,0 +1,55 @@
+version: 2
+
+# Tests declared here check our own logic (tag `tests_delivery`).
+
+models:
+  - name: int_users_changes
+    description: >
+      Append-only log of user changes: one row each time a user appears for the first time or
+      its province of residence, organization or eligibility changes from one nightly batch to the
+      next. Input of `dim_users_scd`.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          description: >
+            One row per user and batch. A duplicate would create two versions starting the same
+            day in `dim_users_scd`.
+          combination_of_columns: ['user_id', 'loaded_at']
+    columns:
+      - name: user_id
+        description: User identifier (`id` in raw.users).
+        data_tests:
+          - not_null
+      - name: loaded_at
+        description: Load timestamp of the batch where the change was first seen.
+        data_tests:
+          - not_null
+      - name: province_of_residence
+        description: Province of residence from this batch on (ISO 3166-2 code, e.g. `CA-QC`).
+      - name: organization_id
+        description: Organization the user is enrolled with from this batch on.
+      - name: has_eligible_programs
+        description: "{{ doc('has_eligible_programs') }}"
+
+  - name: int_organizations_changes
+    description: >
+      Append-only log of organization changes: one row each time an organization appears for the
+      first time or its name or churn date changes. Input of `dim_organizations_scd`.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          description: >
+            One row per organization and batch. A duplicate would create two versions starting the
+            same day in `dim_organizations_scd`.
+          combination_of_columns: ['organization_id', 'loaded_at']
+    columns:
+      - name: organization_id
+        description: Organization identifier (`id` in raw.organizations).
+        data_tests:
+          - not_null
+      - name: loaded_at
+        description: Load timestamp of the batch where the change was first seen.
+        data_tests:
+          - not_null
+      - name: organization_name
+        description: Name of the organization from this batch on.
+      - name: churned_at
+        description: Date the organization ended its contract; null while it is active.

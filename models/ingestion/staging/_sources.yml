@@ -1,0 +1,196 @@
+version: 2
+
+# Raw tables, as delivered. Tests declared here are data quality tests (tag `tests_data_quality`):
+# they monitor what the sources send. Severity: `error` when a failure would publish a wrong KPI,
+# `warn` when the data is still usable but needs a look.
+
+sources:
+  - name: raw
+    schema: raw
+    tags: ['source']
+    tables:
+      - name: organizations
+        description: >
+          Customer organizations. Users are enrolled with an organization, which gives them access
+          to the programs it subscribes to.
+
+          Full snapshot every night: each batch holds every organization and is appended with its
+          `loaded_at` timestamp.
+        loaded_at_field: loaded_at
+        freshness:
+          warn_after: {count: 26, period: hour}
+          error_after: {count: 48, period: hour}
+        data_tests:
+          - dbt_utils.unique_combination_of_columns:
+              name: raw_organizations_one_row_per_batch
+              description: >
+                Each organization appears once per batch. A duplicate would give the organization
+                two states on the same day in the history.
+              combination_of_columns: [id, loaded_at]
+          - dbt_utils.unique_combination_of_columns:
+              name: raw_organizations_name_unique_per_batch
+              description: >
+                Two organizations never share a name in the same batch: the indicator by
+                organization shows the name, and two organizations with the same name could not be
+                told apart.
+              combination_of_columns: [name, loaded_at]
+          - dbt_utils.expression_is_true:
+              name: raw_organizations_churned_after_created
+              description: >
+                The churn date is never before the creation date. Warning: a sign of a data entry
+                error in the operational system, to check with the data owner.
+              expression: "churned_at is null or churned_at >= created_at"
+              config:
+                severity: warn
+        columns:
+          - name: id
+            description: Organization identifier, unique within a batch.
+            data_tests:
+              - not_null
+          - name: name
+            description: Organization name, shown in the indicator by organization.
+            data_tests:
+              - not_null
+          - name: created_at
+            description: Date the organization was created.
+          - name: churned_at
+            description: Date the organization ended its contract; null while it is active.
+          - name: programs
+            description: Programs the organization subscribes to (not modeled).
+          - name: loaded_at
+            description: Load timestamp of the nightly batch; identifies the batch.
+            data_tests:
+              - not_null
+              - no_batch_gap:
+                  description: >
+                    A nightly batch is never missing. Warning: a missing batch dates the changes it
+                    contained one day late.
+                  config:
+                    severity: warn
+              - batch_row_count_not_decreasing:
+                  description: >
+                    A batch never has fewer rows than the previous one. Warning: organizations that
+                    disappear from the snapshots are not modeled and keep their last version.
+                  config:
+                    severity: warn
+
+      - name: users
+        description: >
+          Users of the platform, with their province of residence, their organization and the
+          programs they are eligible to. Province and organization change over time.
+
+          Full snapshot every night: each batch holds every user and is appended with its
+          `loaded_at` timestamp.
+        loaded_at_field: loaded_at
+        freshness:
+          warn_after: {count: 26, period: hour}
+          error_after: {count: 48, period: hour}
+        data_tests:
+          - dbt_utils.unique_combination_of_columns:
+              name: raw_users_one_row_per_batch
+              description: >
+                Each user appears once per batch. A duplicate would give the user two states on
+                the same day in the history.
+              combination_of_columns: [id, loaded_at]
+        columns:
+          - name: id
+            description: User identifier, unique within a batch.
+            data_tests:
+              - not_null
+          - name: created_at
+            description: Date the user was created.
+          - name: province_of_residence
+            description: Province of residence (ISO 3166-2 code, e.g. `CA-QC`); changes when the user moves.
+            data_tests:
+              - not_null
+              - accepted_values:
+                  description: >
+                    Province codes are the 13 Canadian ISO codes. An unknown or misspelled code
+                    would add a row to the indicator by province.
+                  values: ['CA-AB', 'CA-BC', 'CA-MB', 'CA-NB', 'CA-NL', 'CA-NS', 'CA-NT', 'CA-NU',
+                           'CA-ON', 'CA-PE', 'CA-QC', 'CA-SK', 'CA-YT']
+          - name: organization_id
+            description: Organization the user is enrolled with; changes when the user switches organization.
+            data_tests:
+              - not_null
+              - relationships_same_batch:
+                  description: >
+                    The organization of each user exists in the organizations batch of the same
+                    night (a plain relationship test would accept an organization known on another
+                    night only). Otherwise the user is allocated to an organization whose name and
+                    churn date are unknown that day.
+                  to: source('raw', 'organizations')
+                  field: id
+                  batch_column: loaded_at
+          - name: eligible_programs
+            description: >
+              Programs the user is eligible to, given by their organization. Only "at least one
+              program" is modeled (`has_eligible_programs`).
+          - name: loaded_at
+            description: Load timestamp of the nightly batch; identifies the batch.
+            data_tests:
+              - not_null
+              - no_batch_gap:
+                  description: >
+                    A nightly batch is never missing. Warning: a missing batch dates the changes it
+                    contained one day late.
+                  config:
+                    severity: warn
+              - batch_row_count_not_decreasing:
+                  description: >
+                    A batch never has fewer rows than the previous one. Warning: users that
+                    disappear from the snapshots are not modeled and keep their last version.
+                  config:
+                    severity: warn
+
+      - name: events
+        description: >
+          Point-in-time events emitted by the application, all in the same generic shape: a
+          timestamp, a type and a JSON payload whose structure depends on the type. Appended as
+          they are collected.
+
+          #### `case_properties` event type
+          Emitted each time a case changes; the payload is the full state of the case after the
+          change:
+          - `case_id`: case identifier.
+          - `subject_user_id`: user who opened the case.
+          - `issue_type`: category of the issue; null until set during triage.
+          - `triage_recommendation`: next step decided at triage; null until then.
+          - `status`: `pending` or `resolved`.
+        loaded_at_field: timestamp
+        freshness:
+          warn_after: {count: 24, period: hour}
+        columns:
+          - name: event_id
+            description: Event identifier.
+            data_tests:
+              - unique
+              - not_null
+          - name: timestamp
+            description: >
+              Emission time. No time zone: assumed to be in the business time zone (see the
+              `business_date` docs block).
+          - name: event_type
+            description: Event type; each type gets its own `stg_events__<event_type>` model.
+            data_tests:
+              - accepted_values:
+                  name: raw_events_event_type_has_a_model
+                  description: >
+                    Every event type has a staging model (only `case_properties` today). Warning:
+                    a new event type is ignored until its `stg_events__<event_type>` model is
+                    written.
+                  values: ['case_properties']
+                  config:
+                    severity: warn
+          - name: data
+            description: JSON payload; its structure depends on `event_type`.
+            data_tests:
+              - json_keys_present:
+                  name: raw_events_case_properties_keys_present
+                  description: >
+                    Every `case_properties` payload has the expected JSON keys. A key renamed or
+                    removed by the source fails the build, instead of silently emptying a column
+                    (once extracted, a missing key and a null look the same).
+                  keys: ['case_id', 'subject_user_id', 'issue_type', 'triage_recommendation', 'status']
+                  config:
+                    where: "event_type = 'case_properties'"

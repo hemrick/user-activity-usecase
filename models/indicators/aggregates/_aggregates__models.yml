@@ -1,0 +1,83 @@
+version: 2
+
+# Tests declared here check our own logic (tag `tests_delivery`).
+
+models:
+  - name: activity_rate_by_province
+    description: >
+      **Monthly User Activity Rate by province.** Number of cases opened in the month ÷ number of
+      users enrolled on the last day of the month. Cases are counted in the user's province on
+      the day the case was opened (a case opened before a move stays in the old province);
+      enrolled users in their province on the last day of the month. Reported months only (over
+      before `reporting_date` and covered by the data). The first month is partial when the data
+      starts after its first day: it counts the cases opened from that day on.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          name: activity_rate_by_province_one_row_per_month_and_province
+          description: >
+            One row per month and province, the grain of the published table.
+          combination_of_columns: [calendar_month, province]
+      - dbt_utils.expression_is_true:
+          name: activity_rate_by_province_rate_formula
+          description: >
+            The rate is cases opened / enrolled users, and null (not 0) when there is no
+            enrolled user.
+          expression: >
+            (count_of_enrolled_users = 0 and activity_rate is null)
+            or activity_rate = count_of_cases_opened / count_of_enrolled_users
+    columns:
+      - name: calendar_month
+        description: First day of the month.
+        data_tests:
+          - not_null
+      - name: province
+        description: Province of residence (ISO 3166-2 code, e.g. `CA-QC`).
+        data_tests:
+          - not_null
+      - name: count_of_enrolled_users
+        description: Users enrolled on the last day of the month (`fct_user_month_end.is_enrolled`), by their province on that day.
+      - name: count_of_cases_opened
+        description: Cases opened in the month, by the user's province on the opening day.
+      - name: activity_rate
+        description: "`count_of_cases_opened / count_of_enrolled_users`; null when there is no enrolled user."
+
+  - name: activity_rate_by_organization
+    description: >
+      **Monthly User Activity Rate by organization.** Same definition as `activity_rate_by_province`,
+      by the organization the user is enrolled with. Organizations are grouped by
+      `organization_id` and shown with their current name, so a renamed organization stays on one
+      row. An organization with users but no enrolled user (e.g. an organization that offers
+      no program) appears with a null rate.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          name: activity_rate_by_organization_one_row_per_month_and_organization
+          description: >
+            One row per month and organization, the grain of the published table.
+          combination_of_columns: [calendar_month, organization_id]
+      - dbt_utils.expression_is_true:
+          name: activity_rate_by_organization_rate_formula
+          description: >
+            The rate is cases opened / enrolled users, and null (not 0) when there is no
+            enrolled user.
+          expression: >
+            (count_of_enrolled_users = 0 and activity_rate is null)
+            or activity_rate = count_of_cases_opened / count_of_enrolled_users
+    columns:
+      - name: calendar_month
+        description: First day of the month.
+        data_tests:
+          - not_null
+      - name: organization_id
+        description: Organization identifier.
+        data_tests:
+          - not_null
+      - name: organization_name
+        description: Current name of the organization.
+        data_tests:
+          - not_null
+      - name: count_of_enrolled_users
+        description: Users enrolled on the last day of the month (`fct_user_month_end.is_enrolled`), by their organization on that day.
+      - name: count_of_cases_opened
+        description: Cases opened in the month, by the user's organization on the opening day.
+      - name: activity_rate
+        description: "`count_of_cases_opened / count_of_enrolled_users`; null when there is no enrolled user."

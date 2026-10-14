@@ -1,0 +1,122 @@
+version: 2
+
+# Unit tests on synthetic batches (tag `tests_delivery`). Batches are loaded at 01:20 local time.
+
+unit_tests:
+  - name: int_users_changes_full_refresh
+    description: >
+      Full refresh. User 1: identical batches → 1 row. User 2: QC → ON → QC → 3 rows (a return
+      to a previous state is a change). User 3: programs reordered → no row; programs emptied →
+      new row. User 4: organization changes → new row.
+    model: int_users_changes
+    config:
+      tags: ['tests_delivery']
+    overrides:
+      macros:
+        is_incremental: false
+    given:
+      - input: source('raw', 'users')
+        format: sql
+        rows: |
+          select
+            id, 'name' as name, 'email' as email, date '1990-01-01' as date_of_birth,
+            province_of_residence, date '2023-01-01' as created_at, loaded_at, organization_id,
+            eligible_programs::varchar[] as eligible_programs
+          from (values
+            (1, 'CA-QC', 10, ['program_a'],                 timestamptz '2024-03-02 01:20:00-05'),
+            (1, 'CA-QC', 10, ['program_a'],                 timestamptz '2024-03-03 01:20:00-05'),
+            (1, 'CA-QC', 10, ['program_a'],                 timestamptz '2024-03-04 01:20:00-05'),
+            (2, 'CA-QC', 10, ['program_a'],                 timestamptz '2024-03-02 01:20:00-05'),
+            (2, 'CA-ON', 10, ['program_a'],                 timestamptz '2024-03-03 01:20:00-05'),
+            (2, 'CA-QC', 10, ['program_a'],                 timestamptz '2024-03-04 01:20:00-05'),
+            (3, 'CA-AB', 20, ['program_a', 'program_b'], timestamptz '2024-03-02 01:20:00-05'),
+            (3, 'CA-AB', 20, ['program_b', 'program_a'], timestamptz '2024-03-03 01:20:00-05'),
+            (3, 'CA-AB', 20, [],                                timestamptz '2024-03-04 01:20:00-05'),
+            (4, 'CA-BC', 30, ['program_b'],                  timestamptz '2024-03-02 01:20:00-05'),
+            (4, 'CA-BC', 31, ['program_b'],                  timestamptz '2024-03-03 01:20:00-05')
+          ) as t(id, province_of_residence, organization_id, eligible_programs, loaded_at)
+    expect:
+      rows:
+        - {user_id: 1, loaded_at: '2024-03-02 01:20:00-05', province_of_residence: CA-QC, organization_id: 10, has_eligible_programs: true}
+        - {user_id: 2, loaded_at: '2024-03-02 01:20:00-05', province_of_residence: CA-QC, organization_id: 10, has_eligible_programs: true}
+        - {user_id: 2, loaded_at: '2024-03-03 01:20:00-05', province_of_residence: CA-ON, organization_id: 10, has_eligible_programs: true}
+        - {user_id: 2, loaded_at: '2024-03-04 01:20:00-05', province_of_residence: CA-QC, organization_id: 10, has_eligible_programs: true}
+        - {user_id: 3, loaded_at: '2024-03-02 01:20:00-05', province_of_residence: CA-AB, organization_id: 20, has_eligible_programs: true}
+        - {user_id: 3, loaded_at: '2024-03-04 01:20:00-05', province_of_residence: CA-AB, organization_id: 20, has_eligible_programs: false}
+        - {user_id: 4, loaded_at: '2024-03-02 01:20:00-05', province_of_residence: CA-BC, organization_id: 30, has_eligible_programs: true}
+        - {user_id: 4, loaded_at: '2024-03-03 01:20:00-05', province_of_residence: CA-BC, organization_id: 31, has_eligible_programs: true}
+
+  - name: int_users_changes_incremental_run
+    description: >
+      Incremental run; the latest row written is loaded on 2024-03-02. The 2024-03-02 batch is not
+      read again (user 2 is CA-AB there, which would otherwise be a change). User 1: unchanged
+      batches, then a move on 2024-03-05 → only that row is added. User 2: unchanged since its
+      latest row → nothing added (its latest row is not written twice). User 3: new user → added.
+    model: int_users_changes
+    config:
+      tags: ['tests_delivery']
+    overrides:
+      macros:
+        is_incremental: true
+    given:
+      - input: this
+        format: sql
+        rows: |
+          select user_id, loaded_at, province_of_residence, 10 as organization_id, true as has_eligible_programs
+          from (values
+            (1, 'CA-QC', timestamptz '2024-03-02 01:20:00-05'),
+            (2, 'CA-QC', timestamptz '2024-02-21 01:20:00-05'),
+            (2, 'CA-ON', timestamptz '2024-03-02 01:20:00-05')
+          ) as t(user_id, province_of_residence, loaded_at)
+      - input: source('raw', 'users')
+        format: sql
+        rows: |
+          select
+            id, 'name' as name, 'email' as email, date '1990-01-01' as date_of_birth,
+            province_of_residence, date '2024-01-01' as created_at, loaded_at, 10 as organization_id,
+            ['program_a']::varchar[] as eligible_programs
+          from (values
+            (2, 'CA-AB', timestamptz '2024-03-02 01:20:00-05'),
+            (1, 'CA-QC', timestamptz '2024-03-03 01:20:00-05'),
+            (1, 'CA-QC', timestamptz '2024-03-04 01:20:00-05'),
+            (1, 'CA-ON', timestamptz '2024-03-05 01:20:00-05'),
+            (2, 'CA-ON', timestamptz '2024-03-03 01:20:00-05'),
+            (2, 'CA-ON', timestamptz '2024-03-04 01:20:00-05'),
+            (2, 'CA-ON', timestamptz '2024-03-05 01:20:00-05'),
+            (3, 'CA-QC', timestamptz '2024-03-04 01:20:00-05'),
+            (3, 'CA-QC', timestamptz '2024-03-05 01:20:00-05')
+          ) as t(id, province_of_residence, loaded_at)
+    expect:
+      rows:
+        - {user_id: 1, loaded_at: '2024-03-05 01:20:00-05', province_of_residence: CA-ON}
+        - {user_id: 3, loaded_at: '2024-03-04 01:20:00-05', province_of_residence: CA-QC}
+
+  - name: int_organizations_changes_full_refresh
+    description: >
+      Full refresh. Organization 1: programs change → no row (programs are not modeled); churn date
+      filled → new row. Organization 2: renamed → new row.
+    model: int_organizations_changes
+    config:
+      tags: ['tests_delivery']
+    overrides:
+      macros:
+        is_incremental: false
+    given:
+      - input: source('raw', 'organizations')
+        format: sql
+        rows: |
+          select
+            id, name, programs::varchar[] as programs, churned_at, date '2024-01-01' as created_at, loaded_at
+          from (values
+            (1, 'Acme',   ['program_a'],                 null::date,        timestamptz '2024-03-02 01:20:00-05'),
+            (1, 'Acme',   ['program_a', 'program_b'], null::date,        timestamptz '2024-03-03 01:20:00-05'),
+            (1, 'Acme',   ['program_a', 'program_b'], date '2024-03-31', timestamptz '2024-03-04 01:20:00-05'),
+            (2, 'Old Co', ['program_b'],                  null::date,        timestamptz '2024-03-02 01:20:00-05'),
+            (2, 'New Co', ['program_b'],                  null::date,        timestamptz '2024-03-03 01:20:00-05')
+          ) as t(id, name, programs, churned_at, loaded_at)
+    expect:
+      rows:
+        - {organization_id: 1, loaded_at: '2024-03-02 01:20:00-05', organization_name: Acme,   churned_at: null}
+        - {organization_id: 1, loaded_at: '2024-03-04 01:20:00-05', organization_name: Acme,   churned_at: 2024-03-31}
+        - {organization_id: 2, loaded_at: '2024-03-02 01:20:00-05', organization_name: Old Co, churned_at: null}
+        - {organization_id: 2, loaded_at: '2024-03-03 01:20:00-05', organization_name: New Co, churned_at: null}

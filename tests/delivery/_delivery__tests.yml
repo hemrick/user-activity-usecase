@@ -1,0 +1,51 @@
+version: 2
+
+# Singular delivery tests (tag `tests_delivery`): they check our own logic. Most recompute a result
+# straight from raw, by a path independent from the models, and compare.
+
+data_tests:
+  - name: stg_events_row_count_matches_raw
+    description: >
+      Every `case_properties` event of raw is loaded once, and only those. The model is
+      append-only on the emission timestamp: an event arriving late, with a timestamp older than
+      the latest one already loaded, is skipped and makes this test fail. Fix: `dbt build --full-refresh`.
+
+  - name: dim_users_scd_matches_latest_batch
+    description: >
+      The current versions are exactly the users of the latest raw batch, with the same province,
+      organization and eligibility.
+
+  - name: dim_organizations_scd_matches_latest_batch
+    description: >
+      The current versions are exactly the organizations of the latest raw batch, with the same name
+      and churn date.
+
+  - name: dim_users_scd_consecutive_versions_differ
+    description: >
+      Two consecutive versions of a user differ on at least one tracked attribute. Otherwise the
+      change detection let a repeated state through.
+
+  - name: dim_organizations_scd_consecutive_versions_differ
+    description: >
+      Two consecutive versions of an organization differ on its name or churn date. Otherwise the
+      change detection let a repeated state through.
+
+  - name: fct_cases_count_matches_stg
+    description: One row per case of the events model, no more, no less.
+
+  - name: fct_cases_allocation_matches_raw
+    description: >
+      The province and organization of every case, recomputed without any model: those of the
+      user in the raw snapshot of the opening day. Cases whose user is missing from that
+      snapshot are a source issue (`case_user_in_opening_day_batch`), not checked here.
+
+  - name: fct_user_month_end_matches_raw
+    description: >
+      The month-end state, recomputed without any model: every user of the raw snapshot of the
+      last day of each reported month is in `fct_user_month_end`, with the same province and
+      organization.
+
+  - name: activity_rates_reconcile
+    description: >
+      Both indicator tables distribute the same cases and enrolled users as the facts, month by
+      month: nothing is lost or counted twice between the facts and the reports.

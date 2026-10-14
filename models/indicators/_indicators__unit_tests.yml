@@ -1,0 +1,129 @@
+version: 2
+
+# Unit tests on synthetic batches (tag `tests_delivery`). Batches are loaded at 01:20 local time and
+# describe the end of the previous day: a batch loaded on 2024-03-02 has business date 2024-03-01.
+
+unit_tests:
+  - name: dim_calendar_months_reports_full_covered_months
+    description: >
+      Reporting date 2024-04-15; the data starts on 2024-01-10 and the latest batch covers
+      2024-03-30. January (partial start) and February are over and covered → reported. March is
+      over but its last day is not covered → not reported. April is not over → not reported.
+    model: dim_calendar_months
+    config:
+      tags: ['tests_delivery']
+    overrides:
+      vars:
+        reporting_date: '2024-04-15'
+    given:
+      - input: ref('dim_users_scd')
+        rows:
+          - {user_id: 1, valid_from: 2024-01-10}
+      - input: source('raw', 'users')
+        format: sql
+        rows: |
+          select
+            1 as id, 'name' as name, 'email' as email, date '1990-01-01' as date_of_birth,
+            'CA-QC' as province_of_residence, date '2024-01-01' as created_at,
+            timestamptz '2024-03-31 01:20:00-04' as loaded_at, 10 as organization_id,
+            ['program_a']::varchar[] as eligible_programs
+    expect:
+      rows:
+        - {calendar_month: 2024-01-01, month_end_date: 2024-01-31, is_reported: true}
+        - {calendar_month: 2024-02-01, month_end_date: 2024-02-29, is_reported: true}
+        - {calendar_month: 2024-03-01, month_end_date: 2024-03-31, is_reported: false}
+        - {calendar_month: 2024-04-01, month_end_date: 2024-04-30, is_reported: false}
+
+  - name: fct_cases_allocates_at_opening
+    description: >
+      User 1 moves from CA-QC to CA-ON on 2024-03-10. Case 1 (opened 2024-03-05, resolved
+      2024-03-12) → CA-QC, counted once at its earliest event; case 2 (opened on the day of the
+      move) → CA-ON; case 3 (2024-03-20) → CA-ON. Case 4: user 2 has no version that day → kept
+      with a null province.
+    model: fct_cases
+    config:
+      tags: ['tests_delivery']
+    given:
+      - input: ref('stg_events__case_properties')
+        rows:
+          - {event_id: e1, emitted_at: '2024-03-05 00:00:00', case_id: 1, user_id: 1, status: pending}
+          - {event_id: e2, emitted_at: '2024-03-12 09:00:00', case_id: 1, user_id: 1, status: resolved}
+          - {event_id: e3, emitted_at: '2024-03-10 00:00:00', case_id: 2, user_id: 1, status: pending}
+          - {event_id: e4, emitted_at: '2024-03-20 00:00:00', case_id: 3, user_id: 1, status: pending}
+          - {event_id: e5, emitted_at: '2024-03-20 00:00:00', case_id: 4, user_id: 2, status: pending}
+      - input: ref('dim_users_scd')
+        rows:
+          - {user_sk: m1v1, user_id: 1, province_of_residence: CA-QC, organization_id: 10, valid_from: 2024-03-01, valid_to: 2024-03-10}
+          - {user_sk: m1v2, user_id: 1, province_of_residence: CA-ON, organization_id: 10, valid_from: 2024-03-10, valid_to: null}
+          - {user_sk: m2v1, user_id: 2, province_of_residence: CA-AB, organization_id: 20, valid_from: 2024-04-01, valid_to: null}
+    expect:
+      rows:
+        - {case_id: 1, opened_date: 2024-03-05, calendar_month: 2024-03-01, user_sk: m1v1, province_of_residence: CA-QC}
+        - {case_id: 2, opened_date: 2024-03-10, calendar_month: 2024-03-01, user_sk: m1v2, province_of_residence: CA-ON}
+        - {case_id: 3, opened_date: 2024-03-20, calendar_month: 2024-03-01, user_sk: m1v2, province_of_residence: CA-ON}
+        - {case_id: 4, opened_date: 2024-03-20, calendar_month: 2024-03-01, user_sk: null, province_of_residence: null}
+
+  - name: fct_user_month_end_enrolment
+    description: >
+      March 2024 is reported, April is not. User 1: programs, active organization → enrolled.
+      User 2: no program → not enrolled. User 3: organization churned on 2024-03-15, before the
+      month-end → not enrolled. User 4: organization churns on 2024-04-15, after the month-end →
+      enrolled. User 5: created after the month-end → no row.
+    model: fct_user_month_end
+    config:
+      tags: ['tests_delivery']
+    given:
+      - input: ref('dim_calendar_months')
+        rows:
+          - {calendar_month: 2024-03-01, month_end_date: 2024-03-31, is_reported: true}
+          - {calendar_month: 2024-04-01, month_end_date: 2024-04-30, is_reported: false}
+      - input: ref('dim_users_scd')
+        rows:
+          - {user_sk: m1, user_id: 1, province_of_residence: CA-QC, organization_id: 10, has_eligible_programs: true,  valid_from: 2024-01-01, valid_to: null}
+          - {user_sk: m2, user_id: 2, province_of_residence: CA-QC, organization_id: 10, has_eligible_programs: false, valid_from: 2024-01-01, valid_to: null}
+          - {user_sk: m3, user_id: 3, province_of_residence: CA-QC, organization_id: 30, has_eligible_programs: true,  valid_from: 2024-01-01, valid_to: null}
+          - {user_sk: m4, user_id: 4, province_of_residence: CA-QC, organization_id: 40, has_eligible_programs: true,  valid_from: 2024-01-01, valid_to: null}
+          - {user_sk: m5, user_id: 5, province_of_residence: CA-QC, organization_id: 10, has_eligible_programs: true,  valid_from: 2024-04-05, valid_to: null}
+      - input: ref('dim_organizations_scd')
+        rows:
+          - {organization_id: 10, churned_at: null,       valid_from: 2024-01-01, valid_to: null}
+          - {organization_id: 30, churned_at: 2024-03-15, valid_from: 2024-01-01, valid_to: null}
+          - {organization_id: 40, churned_at: 2024-04-15, valid_from: 2024-01-01, valid_to: null}
+    expect:
+      rows:
+        - {user_id: 1, calendar_month: 2024-03-01, has_eligible_programs: true,  is_organization_active: true,  is_enrolled: true}
+        - {user_id: 2, calendar_month: 2024-03-01, has_eligible_programs: false, is_organization_active: true,  is_enrolled: false}
+        - {user_id: 3, calendar_month: 2024-03-01, has_eligible_programs: true,  is_organization_active: false, is_enrolled: false}
+        - {user_id: 4, calendar_month: 2024-03-01, has_eligible_programs: true,  is_organization_active: true,  is_enrolled: true}
+
+  - name: fct_user_month_end_state_on_last_day
+    description: >
+      The user is counted with the version valid on the last day of the month (2024-03-31).
+      User 1: moves from CA-QC to CA-ON mid-month (2024-03-10) → CA-ON. User 2: changes
+      organization from 10 to 20 on the last day → organization 20 (the day of a change belongs to
+      the new version). User 3: moves from CA-QC to CA-AB on the first day of the next month →
+      still CA-QC.
+    model: fct_user_month_end
+    config:
+      tags: ['tests_delivery']
+    given:
+      - input: ref('dim_calendar_months')
+        rows:
+          - {calendar_month: 2024-03-01, month_end_date: 2024-03-31, is_reported: true}
+      - input: ref('dim_users_scd')
+        rows:
+          - {user_sk: m1v1, user_id: 1, province_of_residence: CA-QC, organization_id: 10, has_eligible_programs: true, valid_from: 2024-01-01, valid_to: 2024-03-10}
+          - {user_sk: m1v2, user_id: 1, province_of_residence: CA-ON, organization_id: 10, has_eligible_programs: true, valid_from: 2024-03-10, valid_to: null}
+          - {user_sk: m2v1, user_id: 2, province_of_residence: CA-QC, organization_id: 10, has_eligible_programs: true, valid_from: 2024-01-01, valid_to: 2024-03-31}
+          - {user_sk: m2v2, user_id: 2, province_of_residence: CA-QC, organization_id: 20, has_eligible_programs: true, valid_from: 2024-03-31, valid_to: null}
+          - {user_sk: m3v1, user_id: 3, province_of_residence: CA-QC, organization_id: 10, has_eligible_programs: true, valid_from: 2024-01-01, valid_to: 2024-04-01}
+          - {user_sk: m3v2, user_id: 3, province_of_residence: CA-AB, organization_id: 10, has_eligible_programs: true, valid_from: 2024-04-01, valid_to: null}
+      - input: ref('dim_organizations_scd')
+        rows:
+          - {organization_id: 10, churned_at: null, valid_from: 2024-01-01, valid_to: null}
+          - {organization_id: 20, churned_at: null, valid_from: 2024-01-01, valid_to: null}
+    expect:
+      rows:
+        - {user_id: 1, calendar_month: 2024-03-01, user_sk: m1v2, province_of_residence: CA-ON, organization_id: 10, is_enrolled: true}
+        - {user_id: 2, calendar_month: 2024-03-01, user_sk: m2v2, province_of_residence: CA-QC, organization_id: 20, is_enrolled: true}
+        - {user_id: 3, calendar_month: 2024-03-01, user_sk: m3v1, province_of_residence: CA-QC, organization_id: 10, is_enrolled: true}

@@ -1,0 +1,11 @@
+version: 2
+
+macros:
+  - name: business_date
+    description: "{{ doc('business_date') }}"
+    arguments:
+      - name: loaded_at_column
+        type: string
+        description: >
+          SQL expression of the batch timestamp (`loaded_at`, stored with a time zone). Returns the
+          business date it describes: the date of the timestamp in the business time zone, minus one day.

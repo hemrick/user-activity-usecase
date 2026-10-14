@@ -1,0 +1,68 @@
+version: 2
+
+# Custom generic tests: reusable test definitions, applied to columns in the yml files of models/.
+# Each use becomes a test, tagged by the folder of the yml that applies it.
+
+macros:
+  - name: test_no_batch_gap
+    description: >
+      Fails on every batch date that comes more than one day after the previous one, i.e. when a
+      nightly batch is missing. A missing batch dates the changes it contained one day late.
+    arguments:
+      - name: model
+        type: relation
+        description: Table holding the batches.
+      - name: column_name
+        type: string
+        description: Batch timestamp column; turned into a business date with `business_date`.
+
+  - name: test_batch_row_count_not_decreasing
+    description: >
+      Fails on every batch that has fewer rows than the previous one: a partial extract, or entities
+      removed from the source. Removals are not modeled (the entity keeps its last version), so a
+      failure needs a look at the source.
+    arguments:
+      - name: model
+        type: relation
+        description: Table holding the batches.
+      - name: column_name
+        type: string
+        description: Batch column (`loaded_at`).
+
+  - name: test_relationships_same_batch
+    description: >
+      Like the built-in `relationships` test, but the parent row must exist in the same batch: a
+      user must point to an organization delivered the same night, not only to one that existed
+      at some point.
+    arguments:
+      - name: model
+        type: relation
+        description: Child table.
+      - name: column_name
+        type: string
+        description: Foreign key column of the child table.
+      - name: to
+        type: relation
+        description: Parent table.
+      - name: field
+        type: string
+        description: Key column of the parent table.
+      - name: batch_column
+        type: string
+        description: Batch column, present in both tables.
+
+  - name: test_json_keys_present
+    description: >
+      Fails on every JSON object missing one of the expected keys. Checked on the JSON itself: once
+      extracted, a missing key and an explicit `null` both read as SQL NULL, so a renamed key would
+      silently empty a column.
+    arguments:
+      - name: model
+        type: relation
+        description: Table holding the JSON column.
+      - name: column_name
+        type: string
+        description: JSON column.
+      - name: keys
+        type: list
+        description: Keys every object must contain.

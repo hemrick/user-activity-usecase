@@ -1,0 +1,59 @@
+version: 2
+
+unit_tests:
+  - name: activity_rate_by_province_mid_month_move
+    description: >
+      March 2024 is reported, April is not. User 1 moved from CA-QC to CA-ON in March: 1 case
+      opened before the move (CA-QC), 2 after (CA-ON); on 31 March they are enrolled in CA-ON.
+      User 2 is present in CA-QC but not enrolled. Expected: CA-QC 1 case, 0 enrolled user,
+      null rate; CA-ON 2 cases, 1 enrolled user, rate 2. The April case is not reported.
+    model: activity_rate_by_province
+    config:
+      tags: ['tests_delivery']
+    given:
+      - input: ref('dim_calendar_months')
+        rows:
+          - {calendar_month: 2024-03-01, month_end_date: 2024-03-31, is_reported: true}
+          - {calendar_month: 2024-04-01, month_end_date: 2024-04-30, is_reported: false}
+      - input: ref('fct_cases')
+        rows:
+          - {case_id: 1, user_id: 1, calendar_month: 2024-03-01, province_of_residence: CA-QC}
+          - {case_id: 2, user_id: 1, calendar_month: 2024-03-01, province_of_residence: CA-ON}
+          - {case_id: 3, user_id: 1, calendar_month: 2024-03-01, province_of_residence: CA-ON}
+          - {case_id: 4, user_id: 1, calendar_month: 2024-04-01, province_of_residence: CA-ON}
+      - input: ref('fct_user_month_end')
+        rows:
+          - {user_id: 1, calendar_month: 2024-03-01, province_of_residence: CA-ON, is_enrolled: true}
+          - {user_id: 2, calendar_month: 2024-03-01, province_of_residence: CA-QC, is_enrolled: false}
+    expect:
+      rows:
+        - {calendar_month: 2024-03-01, province: CA-QC, count_of_enrolled_users: 0, count_of_cases_opened: 1, activity_rate: null}
+        - {calendar_month: 2024-03-01, province: CA-ON, count_of_enrolled_users: 1, count_of_cases_opened: 2, activity_rate: 2.0}
+
+  - name: activity_rate_by_organization_current_name
+    description: >
+      Cases are counted by the organization at opening (10, then 20 after the user moved) and
+      shown with the organization's current name.
+    model: activity_rate_by_organization
+    config:
+      tags: ['tests_delivery']
+    given:
+      - input: ref('dim_calendar_months')
+        rows:
+          - {calendar_month: 2024-03-01, month_end_date: 2024-03-31, is_reported: true}
+      - input: ref('fct_cases')
+        rows:
+          - {case_id: 1, user_id: 1, calendar_month: 2024-03-01, organization_id: 10}
+          - {case_id: 2, user_id: 1, calendar_month: 2024-03-01, organization_id: 20}
+      - input: ref('fct_user_month_end')
+        rows:
+          - {user_id: 1, calendar_month: 2024-03-01, organization_id: 20, is_enrolled: true}
+      - input: ref('dim_organizations_scd')
+        rows:
+          - {organization_id: 10, organization_name: Old name, valid_from: 2023-01-01, valid_to: 2024-02-01, is_current: false}
+          - {organization_id: 10, organization_name: Acme,     valid_from: 2024-02-01, valid_to: null,       is_current: true}
+          - {organization_id: 20, organization_name: Globex,   valid_from: 2023-01-01, valid_to: null,       is_current: true}
+    expect:
+      rows:
+        - {calendar_month: 2024-03-01, organization_id: 10, organization_name: Acme,   count_of_enrolled_users: 0, count_of_cases_opened: 1, activity_rate: null}
+        - {calendar_month: 2024-03-01, organization_id: 20, organization_name: Globex, count_of_enrolled_users: 1, count_of_cases_opened: 1, activity_rate: 1.0}

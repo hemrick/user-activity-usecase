@@ -1,0 +1,63 @@
+name: 'data_mart'
+version: '1.0.0'
+
+profile: 'data_mart'
+
+model-paths: ["models"]
+analysis-paths: ["analyses"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+vars:
+  # Time zone used to turn batch timestamps into business dates (see the `business_date` docs block).
+  business_timezone: 'America/Toronto'
+  # "Today" in the business time zone: a month is reported once it is over before this date. Fixed
+  # here for reproducible results; in production it would be the current date.
+  reporting_date: '2024-07-01'
+
+# Tags, to select a layer in commands and in the dbt docs graph (`--select tag:<name>`):
+#   source              the raw tables, as delivered (set in models/ingestion/staging/_sources.yml)
+#   daily               every model of the nightly run
+#   ingestion           models/ingestion/: load raw incrementally and keep the history of users
+#                       and organizations (staging, intermediate, history)
+#   indicators          models/indicators/: compute the indicator from the ingested data
+#                       (calendar, facts, indicator tables)
+#   tests_data_quality  tests on what the sources deliver
+#   tests_delivery      tests on our own logic (including unit tests)
+# Generic tests also inherit the tags of the model or source they test.
+
+models:
+  data_mart:
+    +tags: ['daily']
+    # Full rebuild by default; the incremental models declare it (staging folder, int_*_changes).
+    +materialized: table
+    ingestion:
+      +tags: ['ingestion']
+      staging:
+        +materialized: incremental
+    indicators:
+      +tags: ['indicators']
+
+data_tests:
+  data_mart:
+    +store_failures: true
+    # Generic tests are tagged by the folder of the yml that declares them, singular tests by their folder.
+    ingestion:
+      staging:
+        +tags: ['tests_data_quality']
+      intermediate:
+        +tags: ['tests_delivery']
+      history:
+        +tags: ['tests_delivery']
+    indicators:
+      +tags: ['tests_delivery']
+    data_quality:
+      +tags: ['tests_data_quality']
+    delivery:
+      +tags: ['tests_delivery']

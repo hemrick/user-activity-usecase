@@ -1,0 +1,32 @@
+version: 2
+
+# Singular data quality tests (tag `tests_data_quality`): they monitor what the sources deliver.
+
+data_tests:
+  - name: case_has_a_single_user
+    description: >
+      A case is linked to one user only. A case linked to two users could not be
+      allocated to a province or an organization.
+
+  - name: case_earliest_event_is_an_opening
+    description: >
+      The earliest event of each case looks like an opening: status `pending`, no triage, no
+      issue type. Otherwise the opening event was lost and the case would be counted in a later
+      month. Warning only.
+
+  - name: case_user_in_opening_day_batch
+    description: >
+      Every case of a reported month has its user in the user snapshot of its opening day.
+      Otherwise the case cannot be allocated: it stays in `fct_cases` with a null province and
+      organization.
+
+  - name: case_user_enrolled_at_opening
+    description: >
+      The user of each case has a program and an active organization on the opening day. The
+      source is trusted to open cases only for enrolled users (the numerator is not filtered
+      on enrolment); this warning raises the cases that break that assumption.
+
+  - name: month_end_user_batch_exists
+    description: >
+      Every reported month has the user snapshot of its last day. Without it, the users of the
+      month would be counted with a stale state.

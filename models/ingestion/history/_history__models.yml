@@ -1,0 +1,89 @@
+version: 2
+
+# Tests declared here check our own logic (tag `tests_delivery`).
+
+models:
+  - name: dim_users_scd
+    description: >
+      History of each user: province of residence, organization and eligibility over time.
+      Use it to know a user's province or organization on any past date.
+
+      {{ doc('scd_history') }}
+    data_tests:
+      - dbt_utils.mutually_exclusive_ranges:
+          name: dim_users_scd_versions_do_not_overlap
+          description: >
+            The versions of a user never overlap and leave no gap: on any date after its first
+            batch, the user has exactly one version. An overlap would count it twice, a gap would
+            drop it.
+          lower_bound_column: valid_from
+          upper_bound_column: coalesce(valid_to, date '9999-12-31')
+          partition_by: user_id
+          gaps: not_allowed
+    columns:
+      - name: user_sk
+        description: Surrogate key of the version (user_id, valid_from).
+        data_tests:
+          - unique
+          - not_null
+      - name: user_id
+        description: User identifier (`id` in raw.users).
+        data_tests:
+          - not_null
+          - unique:
+              name: dim_users_scd_one_current_version_per_user
+              config:
+                where: "is_current"
+      - name: province_of_residence
+        description: Province of residence during this version (ISO 3166-2 code, e.g. `CA-QC`).
+      - name: organization_id
+        description: Organization the user is enrolled with during this version.
+      - name: has_eligible_programs
+        description: "{{ doc('has_eligible_programs') }}"
+      - name: valid_from
+        description: "{{ doc('valid_from') }}"
+      - name: valid_to
+        description: "{{ doc('valid_to') }}"
+      - name: is_current
+        description: "{{ doc('is_current') }}"
+
+  - name: dim_organizations_scd
+    description: >
+      History of each organization: name and churn status over time.
+
+      {{ doc('scd_history') }}
+    data_tests:
+      - dbt_utils.mutually_exclusive_ranges:
+          name: dim_organizations_scd_versions_do_not_overlap
+          description: >
+            The versions of an organization never overlap and leave no gap: on any date after its
+            first batch, the organization has exactly one version. An overlap would count it twice,
+            a gap would drop it.
+          lower_bound_column: valid_from
+          upper_bound_column: coalesce(valid_to, date '9999-12-31')
+          partition_by: organization_id
+          gaps: not_allowed
+    columns:
+      - name: organization_sk
+        description: Surrogate key of the version (organization_id, valid_from).
+        data_tests:
+          - unique
+          - not_null
+      - name: organization_id
+        description: Organization identifier (`id` in raw.organizations).
+        data_tests:
+          - not_null
+          - unique:
+              name: dim_organizations_scd_one_current_version_per_organization
+              config:
+                where: "is_current"
+      - name: organization_name
+        description: Name of the organization during this version.
+      - name: churned_at
+        description: Date the organization ended its contract; null while it is active.
+      - name: valid_from
+        description: "{{ doc('valid_from') }}"
+      - name: valid_to
+        description: "{{ doc('valid_to') }}"
+      - name: is_current
+        description: "{{ doc('is_current') }}"
